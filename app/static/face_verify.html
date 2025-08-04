@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Verifikasi Wajah</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body class="bg-gray-100 min-h-screen flex flex-col items-center px-4 py-6 text-gray-800">
+    <h2 class="text-xl md:text-2xl font-semibold mb-6 text-center">
+      Verifikasi Wajah Real-Time
+    </h2>
+
+    <div id="userForm" class="w-full max-w-sm flex flex-col gap-3 mb-6">
+      <label for="userIdInput" class="text-sm font-medium">Masukkan User ID</label>
+      <input
+        type="text"
+        id="userIdInput"
+        placeholder="Contoh: user123"
+        class="px-4 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+      />
+      <button
+        id="startBtn"
+        class="bg-blue-600 text-white py-2 rounded-md hover:bg-blue-700 transition"
+      >
+        Mulai Verifikasi
+      </button>
+    </div>
+
+    <div id="videoContainer" class="w-full max-w-sm hidden flex-col items-center gap-4 mb-6">
+      <video
+        id="video"
+        width="320"
+        height="240"
+        autoplay
+        muted
+        class="rounded-lg border border-gray-300"
+      ></video>
+      <canvas id="canvas" width="320" height="240" class="hidden"></canvas>
+    </div>
+
+    <p id="status" class="text-center text-sm font-medium text-gray-600 mb-4">
+      Menunggu input user ID...
+    </p>
+
+    <button
+      id="resetBtn"
+      class="hidden bg-gray-500 text-white px-4 py-2 rounded-md hover:bg-gray-600 transition"
+    >
+      Verifikasi Ulang
+    </button>
+
+    <script>
+      const video = document.getElementById("video");
+      const canvas = document.getElementById("canvas");
+      const ctx = canvas.getContext("2d");
+      const statusEl = document.getElementById("status");
+      const startBtn = document.getElementById("startBtn");
+      const resetBtn = document.getElementById("resetBtn");
+      const userIdInput = document.getElementById("userIdInput");
+      const userForm = document.getElementById("userForm");
+      const videoContainer = document.getElementById("videoContainer");
+
+      let userId = "";
+      let attempts = 0;
+      const maxAttempts = 10;
+      let stream = null;
+      let verificationActive = false;
+
+      async function startVerification() {
+        userId = userIdInput.value.trim();
+        if (!userId) {
+          alert("User ID wajib diisi.");
+          return;
+        }
+
+        userForm.classList.add("hidden");
+        videoContainer.classList.remove("hidden");
+        statusEl.textContent = "🔄 Mengakses kamera...";
+        statusEl.className = "text-center text-sm font-medium text-gray-600 mb-4";
+
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video: true });
+          video.srcObject = stream;
+          verificationActive = true;
+          attempts = 0;
+
+          setTimeout(() => {
+            statusEl.textContent = "🔍 Memulai verifikasi wajah...";
+            sendFrame();
+          }, 1000);
+        } catch (err) {
+          console.error("Webcam error:", err);
+          statusEl.textContent = "❌ Tidak bisa mengakses kamera.";
+          statusEl.className = "text-center text-sm font-medium text-red-600 mb-4";
+          userForm.classList.remove("hidden");
+          videoContainer.classList.add("hidden");
+        }
+      }
+
+      async function sendFrame() {
+        if (!verificationActive) return;
+
+        if (attempts >= maxAttempts) {
+          statusEl.textContent = "❌ Verifikasi gagal. Coba lagi.";
+          statusEl.className = "text-center text-sm font-medium text-red-600 mb-4";
+          stopStream();
+          resetBtn.classList.remove("hidden");
+          return;
+        }
+
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob(async (blob) => {
+          const formData = new FormData();
+          formData.append("user_id", userId);
+          formData.append("image", blob, "frame.jpg");
+
+          try {
+            const res = await fetch("/api/verify-face", {
+              method: "POST",
+              body: formData,
+            });
+
+            const json = await res.json();
+
+            if (json.success) {
+              statusEl.textContent = "✅ Verifikasi berhasil!";
+              statusEl.className = "text-center text-sm font-medium text-green-600 mb-4";
+              verificationActive = false;
+              stopStream();
+              resetBtn.classList.remove("hidden");
+            } else {
+              if (json.message === "Embedding tidak ditemukan.") {
+                statusEl.textContent = "❌ Embedding tidak ditemukan.";
+                statusEl.className = "text-center text-sm font-medium text-red-600 mb-4";
+                return;
+              }
+              attempts++;
+              statusEl.textContent = `❌ Tidak cocok (${attempts}/${maxAttempts}). Mencoba lagi...`;
+              statusEl.className = "text-center text-sm font-medium text-red-600 mb-4";
+              setTimeout(sendFrame, 1000);
+            }
+          } catch (err) {
+            console.error("Error:", err);
+            statusEl.textContent = "❌ Gagal mengirim data ke server.";
+            statusEl.className = "text-center text-sm font-medium text-red-600 mb-4";
+            stopStream();
+            resetBtn.classList.remove("hidden");
+          }
+        }, "image/jpeg");
+      }
+
+      function stopStream() {
+        if (stream) {
+          stream.getTracks().forEach((track) => track.stop());
+        }
+      }
+
+      function resetForm() {
+        stopStream();
+        verificationActive = false;
+        attempts = 0;
+        userForm.classList.remove("hidden");
+        videoContainer.classList.add("hidden");
+        resetBtn.classList.add("hidden");
+        userIdInput.value = "";
+        statusEl.textContent = "Menunggu input user ID...";
+        statusEl.className = "text-center text-sm font-medium text-gray-600 mb-4";
+      }
+
+      startBtn.addEventListener("click", startVerification);
+      resetBtn.addEventListener("click", resetForm);
+    </script>
+  </body>
+</html>
